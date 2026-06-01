@@ -1,0 +1,7 @@
+node_modules
+data/zapxml.db
+data/zapxml.db-journal
+.env
+.git
+.gitignore
+.gemini
