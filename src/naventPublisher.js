@@ -1,5 +1,5 @@
 const db = require('./db');
-const { buildFeedXml } = require('./xmlGenerator');
+const { generateNaventXML } = require('./naventTransformer');
 
 const NAVENT_API_URL = 'https://api-br.open.navent.com';
 
@@ -70,15 +70,12 @@ class NaventPublisher {
       images: images.filter(img => img.property_id === p.id)
     }));
 
-    // Geração do Payload. Se a API deles receber o XML gerado diretamente:
-    const xmlPayload = buildFeedXml(propertiesWithImages);
+    // Generate Payload using the custom Transformer
+    const xmlPayload = generateNaventXML(propertiesWithImages);
 
     console.log(`[Navent] Sincronizando ${properties.length} imóveis via API...`);
     
     // Tenta enviar para o endpoint de Avisos (Lote/XML) da Navent.
-    // Baseado na documentação aberta da Navent (Open Classifieds), 
-    // os endpoints geralmente aceitam payload REST/JSON. Se eles habilitaram
-    // o endpoint XML para a conta, podemos enviar como raw XML.
     try {
       const response = await fetch(`${NAVENT_API_URL}/v1/avisos`, {
         method: 'POST',
