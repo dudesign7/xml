@@ -77,10 +77,10 @@
             type="url"
             id="qi-url"
             class="qi-input"
-            placeholder="Cole aqui a URL do Zap Imóveis..."
+            placeholder="Cole aqui a URL do Zap ou VivaReal..."
             autocomplete="off"
             spellcheck="false"
-            aria-label="URL do imóvel no Zap Imóveis"
+            aria-label="URL do imóvel no Zap Imóveis ou VivaReal"
           />
         </div>
         <div class="qi-limit-wrap" id="qi-limit-wrap">
@@ -102,6 +102,40 @@
             <span class="btn-icon" aria-hidden="true">📋</span>
             Importar Listagem
           </button>
+        </div>
+      </section>
+
+      <!-- Navent API Integration -->
+      <section class="navent-integration" aria-label="Integração Navent" style="margin-top: -8px; margin-bottom: 24px;">
+        <div class="import-card" style="padding: 20px 24px;">
+          <h2 class="import-card-title" style="display: flex; align-items: center; gap: 8px;">
+            <span style="color: var(--cyan);">🚀</span> Integração Direta Imovelweb (API)
+          </h2>
+          <p class="import-card-sub" style="margin-bottom: 16px;">O sistema envia os imóveis diretamente para a API oficial. Insira as credenciais do Imovelweb (Open Navent) para sincronizar.</p>
+          
+          <div class="import-form">
+            <div class="mode-selector">
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <label class="field-label" for="naventUser">Usuário / Token Navent</label>
+                <div class="field-input-wrap">
+                  <span class="field-prefix" aria-hidden="true">👤</span>
+                  <input type="text" id="naventUser" class="field-input" placeholder="Ex: 1D2C19..." value="1D2C1956E01CA8839CAAE2C75B198C6D">
+                </div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <label class="field-label" for="naventPass">Senha</label>
+                <div class="field-input-wrap">
+                  <span class="field-prefix" aria-hidden="true">🔑</span>
+                  <input type="password" id="naventPass" class="field-input" placeholder="Sua senha" value="242613373">
+                </div>
+              </div>
+            </div>
+            
+            <button id="btnSyncNavent" class="btn btn-primary btn-full" style="margin-top: 8px;">
+              <span class="btn-icon" aria-hidden="true">🔄</span> Sincronizar Agora
+            </button>
+            <div id="naventFeedback" class="import-result" hidden></div>
+          </div>
         </div>
       </section>
 
@@ -173,14 +207,14 @@
           <p class="import-card-sub">Extraia dados completos do Zap Imóveis e gere um feed XML automático.</p>
 
           <div class="import-form">
-            <label class="field-label" for="import-url">URL do Zap Imóveis</label>
+            <label class="field-label" for="import-url">URL Zap Imóveis / VivaReal</label>
             <div class="field-input-wrap">
               <span class="field-prefix" aria-hidden="true">🔗</span>
               <input
                 type="url"
                 id="import-url"
                 class="field-input"
-                placeholder="https://www.zapimoveis.com.br/..."
+                placeholder="https://www.zapimoveis.com.br/... ou vivareal.com.br"
                 autocomplete="off"
                 spellcheck="false"
               />
@@ -295,32 +329,7 @@
 
   <!-- ── Toast notifications ───────────────────────────────────────────────── -->
   <div class="toast-container" id="toast-container" role="status" aria-live="polite"></div>
-    <div class="card p-6 mt-8">
-      <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
-        <i class="fas fa-cloud-upload-alt text-blue-500"></i>
-        Integração Direta Imovelweb (API)
-      </h2>
-      <p class="text-gray-600 mb-4 text-sm">
-        O sistema envia os imóveis diretamente para a API oficial. Insira as credenciais do Imovelweb (Open Navent) para sincronizar.
-      </p>
-      
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Usuário / Token Navent</label>
-          <input type="text" id="naventUser" class="w-full border rounded p-2 focus:ring focus:ring-blue-200" placeholder="Ex: 1D2C1956E01CA8839CAAE2C75B198C6D" value="1D2C1956E01CA8839CAAE2C75B198C6D">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Senha</label>
-          <input type="password" id="naventPass" class="w-full border rounded p-2 focus:ring focus:ring-blue-200" placeholder="Sua senha" value="242613373">
-        </div>
-      </div>
-      
-      <button id="btnSyncNavent" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded transition flex justify-center items-center gap-2">
-        <i class="fas fa-sync-alt"></i> Sincronizar Agora
-      </button>
-      <div id="naventFeedback" class="mt-3 text-sm font-medium hidden"></div>
-    </div>
-  </div>
+
 
   <script src="app.js"></script>
 </body>

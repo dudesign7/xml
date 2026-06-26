@@ -1,33 +1,32 @@
 const express = require('express');
 const router  = express.Router();
-const { db }  = require('../db');
+const { pool }  = require('../db');
 
 // ─── GET /api/properties?userId=:id ──────────────────────────────────────────
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: 'userId é obrigatório.' });
 
   try {
-    // Fetch properties with image counts and main image
-    const properties = db.prepare(`
+    const { rows: properties } = await pool.query(`
       SELECT
         p.*,
-        COUNT(i.id)                                    AS image_count,
+        COUNT(i.id)::int                               AS image_count,
         MIN(CASE WHEN i.is_main = 1 THEN i.url END)   AS main_image
       FROM properties p
       LEFT JOIN images i ON i.property_id = p.id
-      WHERE p.user_id = ?
+      WHERE p.user_id = $1
       GROUP BY p.id
       ORDER BY p.created_at DESC
-    `).all(userId);
+    `, [userId]);
 
-    // Attach images to each property
     if (properties.length > 0) {
-      const ids          = properties.map(p => p.id);
-      const placeholders = ids.map(() => '?').join(', ');
-      const images       = db.prepare(
-        `SELECT * FROM images WHERE property_id IN (${placeholders}) ORDER BY display_order ASC`
-      ).all(...ids);
+      const ids = properties.map(p => p.id);
+      const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+      const { rows: images } = await pool.query(
+        `SELECT * FROM images WHERE property_id IN (${placeholders}) ORDER BY display_order ASC`,
+        ids
+      );
 
       const imgMap = {};
       for (const img of images) {
@@ -48,20 +47,24 @@ router.get('/', (req, res) => {
 });
 
 // ─── GET /api/properties/:id ──────────────────────────────────────────────────
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   const { id } = req.params;
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: 'userId é obrigatório.' });
 
   try {
-    const property = db.prepare(
-      'SELECT * FROM properties WHERE id = ? AND user_id = ?'
-    ).get(id, userId);
-    if (!property) return res.status(404).json({ error: 'Imóvel não encontrado.' });
-
-    property.images = db.prepare(
-      'SELECT * FROM images WHERE property_id = ? ORDER BY display_order'
-    ).all(id);
+    const { rows: propRows } = await pool.query(
+      'SELECT * FROM properties WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+    if (propRows.length === 0) return res.status(404).json({ error: 'Imóvel não encontrado.' });
+    
+    const property = propRows[0];
+    const { rows: images } = await pool.query(
+      'SELECT * FROM images WHERE property_id = $1 ORDER BY display_order',
+      [id]
+    );
+    property.images = images;
 
     return res.json({ property });
   } catch (err) {
@@ -70,18 +73,19 @@ router.get('/:id', (req, res) => {
 });
 
 // ─── DELETE /api/property/:id ─────────────────────────────────────────────────
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   const { id }     = req.params;
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: 'userId é obrigatório.' });
 
   try {
-    const prop = db.prepare(
-      'SELECT id FROM properties WHERE id = ? AND user_id = ?'
-    ).get(id, userId);
-    if (!prop) return res.status(404).json({ error: 'Imóvel não encontrado ou sem permissão.' });
+    const { rows: propRows } = await pool.query(
+      'SELECT id FROM properties WHERE id = $1 AND user_id = $2',
+      [id, userId]
+    );
+    if (propRows.length === 0) return res.status(404).json({ error: 'Imóvel não encontrado ou sem permissão.' });
 
-    db.prepare('DELETE FROM properties WHERE id = ?').run(id);
+    await pool.query('DELETE FROM properties WHERE id = $1', [id]);
     return res.json({ success: true, deletedId: parseInt(id) });
 
   } catch (err) {
@@ -91,7 +95,6 @@ router.delete('/:id', (req, res) => {
 });
 
 // ─── DELETE /api/properties/cleanup?userId= ──────────────────────────────────
-// Removes blocked/invalid data already saved to the DB
 const CLEANUP_PATTERNS = [
   'sorry, you have been blocked',
   'você foi bloqueado',
@@ -99,20 +102,21 @@ const CLEANUP_PATTERNS = [
   'attention required',
   'checking your browser',
 ];
-router.delete('/cleanup', (req, res) => {
+router.delete('/cleanup', async (req, res) => {
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: 'userId é obrigatório.' });
 
   try {
-    const properties = db.prepare(
-      'SELECT id, title FROM properties WHERE user_id = ?'
-    ).all(userId);
+    const { rows: properties } = await pool.query(
+      'SELECT id, title FROM properties WHERE user_id = $1',
+      [userId]
+    );
 
     let removed = 0;
     for (const prop of properties) {
       const text = (prop.title || '').toLowerCase();
       if (CLEANUP_PATTERNS.some(p => text.includes(p))) {
-        db.prepare('DELETE FROM properties WHERE id = ?').run(prop.id);
+        await pool.query('DELETE FROM properties WHERE id = $1', [prop.id]);
         removed++;
       }
     }

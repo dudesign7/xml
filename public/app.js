@@ -689,5 +689,56 @@ async function boot() {
   setInterval(renderJobHistory, 10000);
 }
 
-boot();
+// ─── Navent API Sync ──────────────────────────────────────────────────────────
+const btnSyncNavent = $('btnSyncNavent');
+if (btnSyncNavent) {
+  btnSyncNavent.addEventListener('click', async () => {
+    const user = $('naventUser').value.trim();
+    const pass = $('naventPass').value.trim();
+    const feedback = $('naventFeedback');
+    
+    if (!user || !pass) {
+      toast('Preencha o Usuário e a Senha da Navent', 'error');
+      return;
+    }
 
+    btnSyncNavent.disabled = true;
+    btnSyncNavent.innerHTML = '<span class="btn-icon" aria-hidden="true">⏳</span> Sincronizando...';
+    feedback.hidden = true;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/navent/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: user,
+          password: pass,
+          userId: userId
+        })
+      });
+
+      const data = await res.json();
+      
+      feedback.hidden = false;
+      if (res.ok) {
+        toast('Sincronização com Navent concluída com sucesso!', 'success');
+        feedback.className = 'import-result success';
+        feedback.innerHTML = `✅ <strong>Sucesso:</strong> ${data.message || 'Imóveis enviados.'}`;
+      } else {
+        toast('Erro ao sincronizar com Navent.', 'error');
+        feedback.className = 'import-result error';
+        feedback.innerHTML = `❌ <strong>Erro:</strong> ${data.error || 'Falha na comunicação'}<br><small>${data.details || ''}</small>`;
+      }
+    } catch (err) {
+      toast(`Erro de conexão: ${err.message}`, 'error');
+      feedback.hidden = false;
+      feedback.className = 'import-result error';
+      feedback.innerHTML = `❌ <strong>Erro:</strong> ${err.message}`;
+    } finally {
+      btnSyncNavent.disabled = false;
+      btnSyncNavent.innerHTML = '<span class="btn-icon" aria-hidden="true">🔄</span> Sincronizar Agora';
+    }
+  });
+}
+
+boot();

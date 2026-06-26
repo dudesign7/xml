@@ -14,6 +14,7 @@ const feedRouter       = require('./routes/feed');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
+const IS_PROD = process.env.NODE_ENV === 'production';
 
 // trust proxy to handle the SSH reverse tunnel headers correctly
 app.set('trust proxy', 1);
@@ -76,11 +77,15 @@ app.get('/status', async (req, res) => {
   } catch {
     dbStatus = 'error';
   }
+  
+  // Use HTTPS and the request host for the production URL
+  const hostUrl = IS_PROD ? `https://${req.get('host')}` : getTunnelUrl();
+  
   res.json({
     status:    'online',
-    version:   '2.0.0',
+    version:   '3.0.0',
     db:        dbStatus,
-    tunnelUrl: getTunnelUrl(),
+    tunnelUrl: hostUrl,
     timestamp: new Date().toISOString(),
   });
 });
@@ -108,12 +113,16 @@ async function boot() {
     console.log(`[DB] Conectado — ${ts}`);
 
     app.listen(PORT, () => {
-      console.log(`\n🚀 XML Generator SaaS v2 rodando em http://localhost:${PORT}`);
-      console.log(`📡 Feed público:  http://localhost:${PORT}/feed/{userId}.xml`);
-      console.log(`🔌 Status:        http://localhost:${PORT}/status\n`);
+      console.log(`\n🚀 XML Generator SaaS v3 rodando na porta ${PORT}`);
+      console.log(`📡 Feed público:  /feed/{userId}.xml`);
+      console.log(`🔌 Status:        /status\n`);
       
-      // Inicia o túnel de exposição pública
-      startTunnel(PORT);
+      if (!IS_PROD) {
+        // Inicia o túnel de exposição pública apenas localmente
+        startTunnel(PORT);
+      } else {
+        console.log(`[Prod] Hospedado (Sem Localtunnel)`);
+      }
     });
 
   } catch (err) {

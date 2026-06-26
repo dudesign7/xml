@@ -181,23 +181,42 @@ async function extractData(page) {
     const areaMatch = rawArea.match(/(\d+)\s*m²/i);
     const area = areaMatch ? areaMatch[1] : '';
 
-    // Bedrooms
-    const bedroomsText = getText([
-      '[itemprop="numberOfRooms"]', '[aria-label*="quarto"]',
-      '[title*="quarto"]', '[data-testid*="bedroom"]',
-    ]);
+    // ─── Extract numbers from full text fallback ─────────────────────────────
+    const fullText = document.body.innerText || '';
+    const extractNumber = (regexStr) => {
+        const regex = new RegExp(`(\\d+)\\s*(?:${regexStr})`, 'i');
+        const match = fullText.match(regex);
+        return match ? parseInt(match[1], 10) : 0;
+    };
 
-    // Bathrooms
-    const bathroomsText = getText([
-      '[aria-label*="banheiro"]', '[title*="banheiro"]',
-      '[data-testid*="bathroom"]',
-    ]);
+    const bedrooms  = extractNumber('quarto|quartos');
+    const bathrooms = extractNumber('banheiro|banheiros');
+    const parking   = extractNumber('vaga|vagas');
+    const suites    = extractNumber('suíte|suite|suítes|suites');
+    const age       = extractNumber('ano|anos|idade');
 
-    // Parking
-    const parkingText = getText([
-      '[aria-label*="vaga"]', '[title*="vaga"]',
-      '[aria-label*="garagem"]', '[data-testid*="parking"]',
-    ]);
+    // ─── Extract Amenities ───────────────────────────────────────────────────
+    const knownAmenities = [
+      'churrasqueira', 'piscina', 'elevador', 'academia', 'ar condicionado', 
+      'varanda', 'sacada', 'quadra', 'salão de festas', 'playground', 
+      'sauna', 'lavabo', 'armários embutidos', 'armário na cozinha', 
+      'portaria 24h', 'condomínio fechado', 'área de serviço', 'sala de jantar'
+    ];
+    
+    const extractedAmenities = [];
+    document.querySelectorAll('li, span, p').forEach(el => {
+      // Check if it's a leaf node to avoid matching huge container blocks
+      if (el.children.length === 0) {
+        const text = el.innerText?.trim().toLowerCase() || '';
+        knownAmenities.forEach(amenity => {
+          if (text === amenity || text.includes(amenity)) {
+            if (!extractedAmenities.includes(amenity)) {
+               extractedAmenities.push(amenity);
+            }
+          }
+        });
+      }
+    });
 
     // Location
     const location = getText([
@@ -263,10 +282,13 @@ async function extractData(page) {
       refId,
       title,
       price:       getNumber(rawPrice),
-      area,
-      bedrooms:    getNumber(bedroomsText),
-      bathrooms:   getNumber(bathroomsText),
-      parking:     getNumber(parkingText),
+      area:        area ? parseInt(area, 10) : extractNumber('m²|metros quadrados'),
+      bedrooms,
+      suites,
+      bathrooms,
+      parking,
+      age,
+      amenities:   JSON.stringify(extractedAmenities),
       location,
       description,
       images,

@@ -142,7 +142,14 @@ function safeStr(val, maxLen = 2000) {
 
 // ─── Main normalizer ──────────────────────────────────────────────────────────
 function normalize(raw) {
-  const loc = parseLocation(raw.location || '');
+  let locRaw = raw.location || '';
+  // Fallback: if location is missing, try to extract neighborhood from title
+  if (!locRaw && raw.title && raw.title.includes(' - ')) {
+    const parts = raw.title.split(' - ');
+    locRaw = parts[parts.length - 1].trim() + ', Niterói - RJ';
+  }
+
+  const loc = parseLocation(locRaw);
   const combinedTypeSource = `${raw.title || ''} ${raw.url || ''}`;
 
   return {
@@ -155,12 +162,15 @@ function normalize(raw) {
     propertyType:  normalizePropertyType(combinedTypeSource || raw.type || ''),
     area:          normalizeArea(raw.area),
     bedrooms:      normalizeInt(raw.bedrooms),
+    suites:        normalizeInt(raw.suites),
     bathrooms:     normalizeInt(raw.bathrooms),
     parking:       normalizeInt(raw.parking),
+    age:           normalizeInt(raw.age),
+    amenities:     raw.amenities || '[]',
     street:        safeStr(loc.street, 500),
-    neighborhood:  safeStr(loc.neighborhood, 255),
-    city:          safeStr(loc.city, 255),
-    state:         safeStr(loc.state, 10),
+    neighborhood:  safeStr(loc.neighborhood || (locRaw ? locRaw.split(',')[0] : ''), 255),
+    city:          safeStr(loc.city || 'Niterói', 255),
+    state:         safeStr(loc.state || 'RJ', 10),
     country:       'BR',
     images:        Array.isArray(raw.images)
       ? raw.images.filter(u => typeof u === 'string' && u.startsWith('http')).slice(0, 30)

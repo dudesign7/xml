@@ -1,13 +1,13 @@
 const express = require('express');
 const router  = express.Router();
-const { db }  = require('../db');
+const { pool }  = require('../db');
 
 /**
  * POST /api/users/init
  * Body: { userId: string (UUID from localStorage) }
  * Creates the user row if not already present. Returns the user record.
  */
-router.post('/init', (req, res) => {
+router.post('/init', async (req, res) => {
   const { userId } = req.body;
 
   if (!userId) {
@@ -20,10 +20,9 @@ router.post('/init', (req, res) => {
   }
 
   try {
-    // INSERT OR IGNORE – idempotent; no-op if user already exists
-    db.prepare('INSERT OR IGNORE INTO users (id) VALUES (?)').run(userId);
-    const user = db.prepare('SELECT id, name, email, created_at FROM users WHERE id = ?').get(userId);
-    return res.json({ user });
+    await pool.query('INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING', [userId]);
+    const { rows: users } = await pool.query('SELECT id, name, email, created_at FROM users WHERE id = $1', [userId]);
+    return res.json({ user: users[0] });
   } catch (err) {
     console.error('[Route /users/init]', err.message);
     return res.status(500).json({ error: 'Erro ao inicializar usuário.', details: err.message });
@@ -33,11 +32,11 @@ router.post('/init', (req, res) => {
 /**
  * GET /api/users/:userId/stats
  */
-router.get('/:userId/stats', (req, res) => {
+router.get('/:userId/stats', async (req, res) => {
   const { userId } = req.params;
   try {
-    const row = db.prepare('SELECT COUNT(*) as total FROM properties WHERE user_id = ?').get(userId);
-    return res.json({ total: row?.total ?? 0 });
+    const { rows } = await pool.query('SELECT COUNT(*) as total FROM properties WHERE user_id = $1', [userId]);
+    return res.json({ total: parseInt(rows[0]?.total || 0, 10) });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

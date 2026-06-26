@@ -1,6 +1,6 @@
 const express = require('express');
 const router  = express.Router();
-const { db }  = require('../db');
+const { pool }  = require('../db');
 const { createJob, cancelJob } = require('../jobRunner');
 
 // ─── URL validation ───────────────────────────────────────────────────────────
@@ -10,7 +10,7 @@ function isValidUrl(str) {
 }
 
 // ─── POST /api/import – creates a background job ─────────────────────────────
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { url, mode = 'single', userId, limit: userLimit } = req.body;
 
   if (!url || !userId) {
@@ -18,7 +18,7 @@ router.post('/', (req, res) => {
   }
 
   if (!isValidUrl(url)) {
-    return res.status(400).json({ error: 'URL inválida. Use o formato https://www.zapimoveis.com.br/...' });
+    return res.status(400).json({ error: 'URL inválida. Use o formato https://www.zapimoveis.com.br/... ou https://www.vivareal.com.br/...' });
   }
 
   // Determine limit
@@ -30,15 +30,17 @@ router.post('/', (req, res) => {
   if (limit < 1) limit = 1;
 
   // Verify user exists
-  const userExists = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
-  if (!userExists) {
+  const { rows: users } = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
+  if (users.length === 0) {
     return res.status(404).json({ error: 'Usuário não encontrado. Recarregue a página.' });
   }
 
   // Limit to 3 concurrent active jobs per user
-  const activeCount = db.prepare(
-    `SELECT COUNT(*) as n FROM jobs WHERE user_id = ? AND status IN ('pending','collecting','running')`
-  ).get(userId)?.n ?? 0;
+  const { rows: jobs } = await pool.query(
+    `SELECT COUNT(*) as n FROM jobs WHERE user_id = $1 AND status IN ('pending','collecting','running')`,
+    [userId]
+  );
+  const activeCount = parseInt(jobs[0]?.n || 0, 10);
 
   if (activeCount >= 3) {
     return res.status(429).json({
@@ -46,7 +48,7 @@ router.post('/', (req, res) => {
     });
   }
 
-  const jobId = createJob(userId, url, mode, limit);
+  const jobId = await createJob(userId, url, mode, limit);
 
   return res.status(202).json({
     jobId,
@@ -58,12 +60,13 @@ router.post('/', (req, res) => {
 });
 
 // ─── GET /api/import/status/:jobId – poll for progress ───────────────────────
-router.get('/status/:jobId', (req, res) => {
+router.get('/status/:jobId', async (req, res) => {
   const { jobId }  = req.params;
   const { userId } = req.query;
 
-  const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
-  if (!job) return res.status(404).json({ error: 'Job não encontrado.' });
+  const { rows: jobRows } = await pool.query('SELECT * FROM jobs WHERE id = $1', [jobId]);
+  if (jobRows.length === 0) return res.status(404).json({ error: 'Job não encontrado.' });
+  const job = jobRows[0];
 
   // Optional ownership check
   if (userId && job.user_id !== userId) {
@@ -75,7 +78,8 @@ router.get('/status/:jobId', (req, res) => {
   const pct = job.total > 0 ? Math.round((processed / job.total) * 100) : 0;
 
   // ETA estimation (seconds remaining) based on current rate
-  const createdMs  = new Date(job.created_at.replace(' ', 'T') + 'Z').getTime();
+  // In postgres, created_at is a JS Date object already.
+  const createdMs  = new Date(job.created_at).getTime();
   const elapsedMs  = Date.now() - createdMs;
   const rate       = processed / (elapsedMs / 1000); // props/s
   const remaining  = job.total - processed;
@@ -92,18 +96,21 @@ router.get('/status/:jobId', (req, res) => {
 });
 
 // ─── GET /api/import/jobs?userId= – recent jobs list ─────────────────────────
-router.get('/jobs', (req, res) => {
+router.get('/jobs', async (req, res) => {
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: 'userId é obrigatório.' });
 
-  const jobs = db.prepare(
+  const { rows } = await pool.query(
     `SELECT id, status, mode, source_url, total, imported, skipped, errors,
             error_msg, created_at, updated_at
      FROM jobs
-     WHERE user_id = ?
+     WHERE user_id = $1
      ORDER BY created_at DESC
-     LIMIT 20`
-  ).all(userId).map(job => {
+     LIMIT 20`,
+    [userId]
+  );
+  
+  const jobs = rows.map(job => {
     const processed = job.imported + job.skipped + job.errors;
     return { ...job, processed, pct: job.total > 0 ? Math.round(processed / job.total * 100) : 0 };
   });
@@ -112,13 +119,16 @@ router.get('/jobs', (req, res) => {
 });
 
 // ─── POST /api/import/cancel/:jobId – cancel an active job ───────────────────
-router.post('/cancel/:jobId', (req, res) => {
+router.post('/cancel/:jobId', async (req, res) => {
   const { jobId }  = req.params;
   const { userId } = req.body;
   if (!userId) return res.status(400).json({ error: 'userId é obrigatório.' });
 
-  const job = db.prepare('SELECT id, status, user_id FROM jobs WHERE id = ?').get(jobId);
-  if (!job || job.user_id !== userId) {
+  const { rows: jobRows } = await pool.query('SELECT id, status, user_id FROM jobs WHERE id = $1', [jobId]);
+  if (jobRows.length === 0) return res.status(404).json({ error: 'Job não encontrado.' });
+  const job = jobRows[0];
+
+  if (job.user_id !== userId) {
     return res.status(404).json({ error: 'Job não encontrado.' });
   }
 
@@ -127,24 +137,27 @@ router.post('/cancel/:jobId', (req, res) => {
     return res.status(409).json({ error: `Job já está ${job.status}.` });
   }
 
-  cancelJob(jobId);
+  await cancelJob(jobId);
   return res.json({ success: true, message: 'Cancelamento solicitado. Os scrapes em andamento terminarão naturalmente.' });
 });
 
 // ─── DELETE /api/import/jobs/:jobId – remove a finished job ──────────────────
-router.delete('/jobs/:jobId', (req, res) => {
+router.delete('/jobs/:jobId', async (req, res) => {
   const { jobId }  = req.params;
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: 'userId é obrigatório.' });
 
-  const job = db.prepare('SELECT id, status, user_id FROM jobs WHERE id = ?').get(jobId);
-  if (!job || job.user_id !== userId) return res.status(404).json({ error: 'Job não encontrado.' });
+  const { rows: jobRows } = await pool.query('SELECT id, status, user_id FROM jobs WHERE id = $1', [jobId]);
+  if (jobRows.length === 0) return res.status(404).json({ error: 'Job não encontrado.' });
+  const job = jobRows[0];
+  
+  if (job.user_id !== userId) return res.status(404).json({ error: 'Job não encontrado.' });
 
   if (['pending', 'collecting', 'running'].includes(job.status)) {
     return res.status(409).json({ error: 'Não é possível remover um job em andamento.' });
   }
 
-  db.prepare('DELETE FROM jobs WHERE id = ?').run(jobId);
+  await pool.query('DELETE FROM jobs WHERE id = $1', [jobId]);
   return res.json({ success: true });
 });
 

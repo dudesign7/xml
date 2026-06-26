@@ -4,7 +4,7 @@
  * Handles all heavy lifting for bulk imports:
  *  1. Collects property URLs from paginated listings (up to 2000)
  *  2. Scrapes each property with controlled concurrency (pLimit)
- *  3. Saves to SQLite via transactions
+ *  3. Saves to PostgreSQL via transactions
  *  4. Updates job progress in real-time (every 2 seconds)
  *
  * Jobs are fire-and-forget: POST /api/import returns {jobId} immediately.
@@ -15,7 +15,7 @@
 
 const { v4: uuidv4 }  = require('uuid');
 const pLimit           = require('p-limit');
-const { db }           = require('./db');
+const { pool }         = require('./db');
 const { scrapeProperty, scrapePaginatedUrls } = require('./scraper');
 
 // ─── Cancellation flags (in-memory) ──────────────────────────────────────────
@@ -37,39 +37,44 @@ function isBlockedData(normalized) {
 }
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
-function updateJob(jobId, fields) {
+async function updateJob(jobId, fields) {
   const keys  = Object.keys(fields);
-  const sets  = keys.map(k => `${k} = ?`).join(', ');
+  const sets  = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
   const vals  = [...keys.map(k => fields[k]), jobId];
   try {
-    db.prepare(`UPDATE jobs SET ${sets}, updated_at = datetime('now') WHERE id = ?`).run(...vals);
+    await pool.query(`UPDATE jobs SET ${sets}, updated_at = NOW() WHERE id = $${keys.length + 1}`, vals);
   } catch (err) {
     console.error('[JobRunner] updateJob error:', err.message);
   }
 }
 
-function getJob(jobId) {
-  return db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
+async function getJob(jobId) {
+  const { rows } = await pool.query('SELECT * FROM jobs WHERE id = $1', [jobId]);
+  return rows[0];
 }
 
 // ─── Save a single normalized property ───────────────────────────────────────
-function saveProperty(normalized, userId) {
+async function saveProperty(normalized, userId) {
   // Duplicate check
   if (normalized.externalId) {
-    const existing = db.prepare(
-      'SELECT id FROM properties WHERE user_id = ? AND external_id = ?'
-    ).get(userId, normalized.externalId);
-    if (existing) return { skipped: true, id: existing.id };
+    const { rows } = await pool.query(
+      'SELECT id FROM properties WHERE user_id = $1 AND external_id = $2',
+      [userId, normalized.externalId]
+    );
+    if (rows.length > 0) return { skipped: true, id: rows[0].id };
   }
 
-  const persist = db.transaction(() => {
-    const info = db.prepare(`
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: propInfo } = await client.query(`
       INSERT INTO properties
         (user_id, external_id, source_url, title, description, price,
-         operation_type, property_type, area, bedrooms, bathrooms, parking,
+         operation_type, property_type, area, bedrooms, suites, bathrooms, parking, age, amenities,
          street, neighborhood, city, state, country)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+      RETURNING id
+    `, [
       userId,
       normalized.externalId    || null,
       normalized.sourceUrl     || null,
@@ -80,34 +85,42 @@ function saveProperty(normalized, userId) {
       normalized.propertyType  || 'Apartamento',
       normalized.area          || 0,
       normalized.bedrooms      || 0,
+      normalized.suites        || 0,
       normalized.bathrooms     || 0,
       normalized.parking       || 0,
+      normalized.age           || 0,
+      normalized.amenities     || '[]',
       normalized.street        || '',
       normalized.neighborhood  || '',
       normalized.city          || '',
       normalized.state         || '',
-      normalized.country       || 'BR',
-    );
+      normalized.country       || 'BR'
+    ]);
 
-    const propertyId = info.lastInsertRowid;
+    const propertyId = propInfo[0].id;
 
     if (normalized.images?.length > 0) {
-      const insertImg = db.prepare(
-        'INSERT INTO images (property_id, url, is_main, display_order) VALUES (?,?,?,?)'
-      );
-      normalized.images.forEach((url, i) => insertImg.run(propertyId, url, i === 0 ? 1 : 0, i));
+      for (let i = 0; i < normalized.images.length; i++) {
+        await client.query(
+          'INSERT INTO images (property_id, url, is_main, display_order) VALUES ($1,$2,$3,$4)',
+          [propertyId, normalized.images[i], i === 0 ? 1 : 0, i]
+        );
+      }
     }
 
-    return { id: propertyId };
-  });
-
-  const { id } = persist();
-  return { skipped: false, id };
+    await client.query('COMMIT');
+    return { skipped: false, id: propertyId };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ─── Core job processor ───────────────────────────────────────────────────────
 async function processJob(jobId) {
-  const job = getJob(jobId);
+  const job = await getJob(jobId);
   if (!job) { console.warn(`[JobRunner] Job ${jobId} não encontrado.`); return; }
   if (job.status !== 'pending') { console.warn(`[JobRunner] Job ${jobId} já ${job.status}.`); return; }
 
@@ -121,11 +134,11 @@ async function processJob(jobId) {
   try {
     // ── Phase 1: Collect URLs ────────────────────────────────────────────────
     let urls = [];
-    updateJob(jobId, { status: 'collecting' });
+    await updateJob(jobId, { status: 'collecting' });
 
     if (job.mode === 'listing') {
       urls = await scrapePaginatedUrls(job.source_url, LIMIT, ({ found, page }) => {
-        updateJob(jobId, { total: found });
+        updateJob(jobId, { total: found }).catch(()=>{});
         console.log(`[Job ${jobId.slice(0,8)}] Coletando: ${found} URLs (página ${page})`);
       });
     } else {
@@ -134,11 +147,11 @@ async function processJob(jobId) {
     }
 
     if (urls.length === 0) {
-      updateJob(jobId, { status: 'failed', error_msg: 'Nenhum imóvel encontrado na URL informada.' });
+      await updateJob(jobId, { status: 'failed', error_msg: 'Nenhum imóvel encontrado na URL informada.' });
       return;
     }
 
-    updateJob(jobId, { total: urls.length, status: 'running' });
+    await updateJob(jobId, { total: urls.length, status: 'running' });
     console.log(`[Job ${jobId.slice(0,8)}] ${urls.length} imóveis para processar.`);
 
     // ── Phase 2: Scrape + save with concurrency ──────────────────────────────
@@ -147,7 +160,7 @@ async function processJob(jobId) {
 
     const flush = (force = false) => {
       if (force || Date.now() - lastDbFlush > 2000) {
-        updateJob(jobId, { imported, skipped, errors });
+        updateJob(jobId, { imported, skipped, errors }).catch(()=>{});
         lastDbFlush = Date.now();
       }
     };
@@ -169,7 +182,7 @@ async function processJob(jobId) {
           return;
         }
 
-        const result = saveProperty(normalized, job.user_id);
+        const result = await saveProperty(normalized, job.user_id);
         if (result.skipped) skipped++;
         else imported++;
 
@@ -189,14 +202,14 @@ async function processJob(jobId) {
     cancelFlags.delete(jobId);
 
     if (wasCancelled) {
-      updateJob(jobId, { imported, skipped, errors, status: 'cancelled' });
+      await updateJob(jobId, { imported, skipped, errors, status: 'cancelled' });
       console.log(
         `[Job ${jobId.slice(0,8)}] 🚫 Cancelado — ` +
         `importados=${imported} skipped=${skipped} errors=${errors}`
       );
     } else {
       // Final flush
-      updateJob(jobId, { imported, skipped, errors, status: 'done' });
+      await updateJob(jobId, { imported, skipped, errors, status: 'done' });
       console.log(
         `[Job ${jobId.slice(0,8)}] ✅ Concluído — ` +
         `importados=${imported} skipped=${skipped} errors=${errors}`
@@ -205,7 +218,7 @@ async function processJob(jobId) {
 
   } catch (err) {
     const msg = err.message?.slice(0, 500) || 'Erro inesperado';
-    updateJob(jobId, { status: 'failed', error_msg: msg });
+    await updateJob(jobId, { status: 'failed', error_msg: msg });
     console.error(`[Job ${jobId.slice(0,8)}] ❌ Falha:`, msg);
   }
 }
@@ -216,18 +229,19 @@ async function processJob(jobId) {
  * Creates a new import job and fires it in the background.
  * @returns {string} jobId (UUID)
  */
-function createJob(userId, url, mode = 'single', limit = 1) {
+async function createJob(userId, url, mode = 'single', limit = 1) {
   const jobId = uuidv4();
-  db.prepare('INSERT INTO jobs (id, user_id, source_url, mode, limit_total) VALUES (?,?,?,?,?)')
-    .run(jobId, userId, url, mode, limit);
-
+  await pool.query(
+    'INSERT INTO jobs (id, user_id, source_url, mode, limit_total) VALUES ($1,$2,$3,$4,$5)',
+    [jobId, userId, url, mode, limit]
+  );
 
   // Fire-and-forget: non-blocking background execution
   setImmediate(() => {
     processJob(jobId).catch(err => {
       console.error('[JobRunner] Uncaught error in processJob:', err.message);
       try {
-        updateJob(jobId, { status: 'failed', error_msg: err.message?.slice(0, 500) });
+        updateJob(jobId, { status: 'failed', error_msg: err.message?.slice(0, 500) }).catch(()=>{});
       } catch (_) {}
     });
   });
@@ -241,11 +255,11 @@ function createJob(userId, url, mode = 'single', limit = 1) {
  * Queued tasks are skipped; in-flight scrapes complete naturally.
  * @param {string} jobId
  */
-function cancelJob(jobId) {
+async function cancelJob(jobId) {
   cancelFlags.set(jobId, true);
   // Immediately reflect in DB so the UI updates without waiting for Promise.all
   try {
-    updateJob(jobId, { status: 'cancelled' });
+    await updateJob(jobId, { status: 'cancelled' });
   } catch (_) {}
   console.log(`[JobRunner] 🚫 Cancelamento solicitado para ${jobId.slice(0,8)}`);
 }
