@@ -27,6 +27,21 @@ function mapPropertyType(typeStr = '') {
   return { idTipo: 2, tipo: 'Apartamento', idSubTipo: 1, subTipo: 'Padrão' };
 }
 
+const stateMap = {
+  'AC': 'Acre', 'AL': 'Alagoas', 'AP': 'Amapá', 'AM': 'Amazonas', 'BA': 'Bahia',
+  'CE': 'Ceará', 'DF': 'Distrito Federal', 'ES': 'Espírito Santo', 'GO': 'Goiás',
+  'MA': 'Maranhão', 'MT': 'Mato Grosso', 'MS': 'Mato Grosso do Sul', 'MG': 'Minas Gerais',
+  'PA': 'Pará', 'PB': 'Paraíba', 'PR': 'Paraná', 'PE': 'Pernambuco', 'PI': 'Piauí',
+  'RJ': 'Rio de Janeiro', 'RN': 'Rio Grande do Norte', 'RS': 'Rio Grande do Sul',
+  'RO': 'Rondônia', 'RR': 'Roraima', 'SC': 'Santa Catarina', 'SP': 'São Paulo',
+  'SE': 'Sergipe', 'TO': 'Tocantins'
+};
+
+function getFullStateName(state = '') {
+  const upper = state.toUpperCase().trim();
+  return stateMap[upper] || state;
+}
+
 function generateNaventXML(propertiesWithImages) {
   const root = create({ version: '1.0', encoding: 'UTF-8' })
     .ele('OpenNavent')
@@ -167,7 +182,7 @@ function generateNaventXML(propertiesWithImages) {
     const locParts = [];
     if (property.neighborhood) locParts.push(property.neighborhood);
     if (property.city) locParts.push(property.city);
-    if (property.state) locParts.push(property.state);
+    if (property.state) locParts.push(getFullStateName(property.state));
     locParts.push('Brasil');
     localizacao.ele('localidade').dat(locParts.join(', '));
     
