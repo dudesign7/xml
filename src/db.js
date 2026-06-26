@@ -76,7 +76,7 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id, created_at);
 `;
 
-const SCHEMA_TRIGGER = \`
+const SCHEMA_TRIGGER = `
   CREATE OR REPLACE FUNCTION update_updated_at_column()
   RETURNS TRIGGER AS $$
   BEGIN
@@ -94,7 +94,7 @@ const SCHEMA_TRIGGER = \`
       EXECUTE FUNCTION update_updated_at_column();
     END IF;
   END $$;
-\`;
+`;
 
 async function runMigrations() {
   if (!process.env.DATABASE_URL) {
@@ -107,10 +107,10 @@ async function runMigrations() {
     await client.query(SCHEMA_TRIGGER);
 
     await client.query(
-      \`UPDATE jobs SET status = 'failed', error_msg = 'Servidor reiniciado'
-       WHERE status IN ('pending', 'collecting', 'running')\`
+      `UPDATE jobs SET status = 'failed', error_msg = 'Servidor reiniciado'
+       WHERE status IN ('pending', 'collecting', 'running')`
     );
-    console.log(\`[DB] PostgreSQL schema aplicado com sucesso.\`);
+    console.log(`[DB] PostgreSQL schema aplicado com sucesso.`);
   } catch (err) {
     console.error('[DB] Migration error:', err.message);
   } finally {
