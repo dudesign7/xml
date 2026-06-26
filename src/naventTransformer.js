@@ -164,10 +164,12 @@ function generateNaventXML(propertiesWithImages) {
 
     // Localizacao
     const localizacao = imovel.ele('localizacao');
-    localizacao.ele('pais').txt('Brasil');
-    if (property.state) localizacao.ele('estado').txt(property.state);
-    if (property.city) localizacao.ele('cidade').txt(property.city);
-    if (property.neighborhood) localizacao.ele('bairro').txt(property.neighborhood);
+    const locParts = [];
+    if (property.neighborhood) locParts.push(property.neighborhood);
+    if (property.city) locParts.push(property.city);
+    if (property.state) locParts.push(property.state);
+    locParts.push('Brasil');
+    localizacao.ele('localidade').dat(locParts.join(', '));
     
     localizacao.ele('mostrarMapa').txt('NO');
     localizacao.ele('endereco').txt(property.street || property.neighborhood || property.city || '');
